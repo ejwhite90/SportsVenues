@@ -1,0 +1,266 @@
+---
+title: "Major American Sports Venues"
+author: "Erik J. White"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T, warning = F, message = F)
+options(scipen=999)
+```
+
+### Abstract
+
+```{r message = F, warning = F}
+library(rvest)
+library(tidyverse)
+library(knitr)
+library(kableExtra)
+library(leaflet)
+```
+
+### Getting and Cleaning Data
+
+Wikipedia conveniently has pages containing venue information for the four major North American sports.
+
+```{r}
+# We will pull our venue data from four different wikipedia pages
+urls = c('https://en.wikipedia.org/wiki/List_of_current_Major_League_Baseball_stadiums',
+         'https://en.wikipedia.org/wiki/List_of_National_Basketball_Association_arenas',
+         'https://en.wikipedia.org/wiki/List_of_current_National_Football_League_stadiums',
+         'https://en.wikipedia.org/wiki/List_of_National_Hockey_League_arenas')
+```
+
+We can use the rvest package to scrape the relevant venue information from each page, manually associating each dataset with the appropriate sports league as we go.
+
+```{r}
+# MLB Data
+
+mlbVenues = read_html(urls[1])
+
+mlbVenues = mlbVenues %>%
+    html_nodes('table') %>%
+    .[[2]] %>%
+    html_table() %>%
+    as_tibble()
+
+mlbVenues = mlbVenues %>%
+    select(Name, Capacity, Location, Team, Opened) %>%
+    mutate(League = 'MLB')
+
+# NBA Data
+
+nbaVenues = read_html(urls[2])
+
+nbaVenues = nbaVenues %>%
+    html_nodes('table') %>%
+    .[[1]] %>%
+    html_table() %>%
+    as_tibble()
+
+nbaVenues = nbaVenues %>%
+    select(Arena, Capacity, Location, `Team(s)`, Opened) %>%
+    mutate(League = 'NBA') %>%
+    rename(Team = `Team(s)`, Name = Arena)
+
+# NFL Data
+
+nflVenues = read_html(urls[3])
+
+nflVenues = nflVenues %>%
+    html_nodes('table') %>%
+    .[[2]] %>%
+    html_table() %>%
+    as_tibble()
+
+nflVenues = nflVenues %>%
+    select(Name, Capacity, Location, `Team(s)`, Opened) %>%
+    mutate(League = 'NFL') %>%
+    rename(Team = `Team(s)`)
+
+# NHL Data
+
+nhlVenues = read_html(urls[4])
+
+nhlVenues = nhlVenues %>%
+    html_nodes('table') %>%
+    .[[1]] %>%
+    html_table() %>%
+    as_tibble()
+
+nhlVenues = nhlVenues %>%
+    select(Arena, Capacity, Location, `Team(s)`, Opened) %>%
+    mutate(League = 'NHL') %>%
+    rename(Team = `Team(s)`, Name = Arena)
+```
+
+Now that we've extracted each table into its own separate dataframe, we'll combine into a common dataset.
+
+```{r}
+# Binds the information into a single tibble
+venues = rbind(mlbVenues, nbaVenues, nflVenues, nhlVenues)
+venues %>%
+    head(10) %>%
+    kable() %>%
+    kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+There are some formatting issues that we'll have to address:  
+
+* The Location variable is currently a single text field that contains both city and state. We'd like to extract city and state into separate variables.  
+* The Name, Team, Capacity, and Opened variables have some stray brackets ([.*]) embedded within the values for certain records. We'll remove any bracketed data throughout these fields.  
+* Once brackets have been removed, the Capacity and Opened fields will need to be converted to integers.  
+
+```{r}
+# Creates city and state features and coerces data into correct types
+venues = venues %>%
+    separate(Location, c('City', 'State'), ', ') %>%
+    mutate(Name = str_replace(Name, '\\[.*\\]', ''),
+           Team = str_replace(Team, '\\[.*\\]', ''),
+           Capacity = as.integer(str_replace_all(str_replace(Capacity, '\\[.*\\]', ''), ',', '')),
+           Opened = as.integer(str_sub(Opened, 1, 4)))
+```
+
+Now that we've addressed our basic formatting issues, we'll perform a sanity check to make sure we're not missing any venues. Each league currently has the following number of teams:  
+
+* 30 MLB Teams  
+* 30 NBA Teams  
+* 32 NFL Teams  
+* 31 NHL Teams  
+
+```{r}
+# Summarizes the venue counts by League for sanity checks
+venues %>% 
+    group_by(League) %>%
+    summarise(VenueCount = n()) %>%
+    kable() %>%
+    kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+Our team and venue counts for the MLB and the NBA match exactly, but it looks like we have one less venue for the NFL and one more venue for the NHL. Finding the extra NFL record shows us that the two New York teams share a football stadium. We'll convert these into separate records.
+
+```{r}
+# Two nfl teams share the same stadium
+venues %>% 
+    filter(League == 'NFL') %>%
+    mutate(TeamLength = sapply(Team, str_length)) %>%
+    arrange(desc(TeamLength)) %>%
+    top_n(1) %>%
+    select(-TeamLength) %>%
+    kable() %>%
+    kable_styling(bootstrap_options = "striped", full_width = F)
+
+# Creates separate rows for each team
+venues = venues %>%
+    mutate(Team = ifelse(Name == 'MetLife Stadium', 
+                         'New York Giants', 
+                         Team))
+venues = rbind(venues,
+               venues %>%
+                   filter(Name == 'MetLife Stadium') %>%
+                   mutate(Team = 'New York Jets'))
+```
+
+In the NHL, the New York Islanders have two active venues. We'll note this fact but will leave our data as is.
+
+```{r}
+# One NHL team has two stadiums
+venues %>%
+    group_by(Team) %>%
+    summarise(NumberOfVenues = n()) %>%
+    filter(NumberOfVenues > 1) %>%
+    inner_join(venues, by = c('Team' = 'Team')) %>%
+    select(-NumberOfVenues) %>%
+    kable() %>%
+    kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+### Exploratory Analysis
+
+Next we'll perform some descriptive analysis on our dataset. We'll start with some basic statistics about venue capacity by league.
+
+```{r}
+venues %>%
+    group_by(League) %>%
+    summarise(MeanCapacity = mean(Capacity),
+              SdCapacity = sd(Capacity),
+              MedianCapacity = median(Capacity),
+              MaxCapacity = max(Capacity),
+              MinCapacity = min(Capacity)) %>%
+              kable() %>%
+              kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+```{r}
+ggplot(venues, aes(League, Capacity, fill = League)) +
+    geom_boxplot() +
+    labs(title = 'Venue Capacity by League',
+         x = 'League',
+         y = 'Capacity') +
+    theme(plot.title = element_text(hjust = .5))
+```
+
+```{r}
+ggplot(venues, aes(x = Capacity, fill = League)) +
+    geom_histogram() +
+    labs(title = 'Venue Capacity by League',
+     x = 'Capacity',
+     y = 'Count') +
+    facet_wrap(~League, ncol = 2, scales = 'free_x') +
+    theme(plot.title = element_text(hjust = .5))
+```
+
+NFL teams clearly tend to have the largest stadium sizes, followed by the MLB teams. NBA teams seem to only narrowly have a greater capacity than NHL teams. This shouldn't be shocking. About a 3rd of NHL and NBA teams share venues, so aside from some small seating re-arrangements, the two leagues should have similar capacity characteristics.
+
+```{r}
+sharedVenues = venues %>%
+    group_by(Name) %>%
+    summarise(TeamCount = n()) %>%
+    filter(TeamCount > 1) %>%
+    inner_join(venues, by = c('Name' = 'Name'))
+
+ggplot(sharedVenues, aes(League, Name, col = League)) +
+    geom_point(pch = 'x', size = 8) + 
+    labs(title = 'Venues Shared by Multiple Teams',
+         x = 'League',
+         y = 'Venue') +
+    theme(plot.title = element_text(hjust = .5))
+```
+
+### Stadium Locations of Major American Sports Leagues
+
+```{r}
+# Reads csv of coordinate data
+coordPath = 'C:/Users/Rick/Documents/Projects/Sports_Venues/venueCoordinates.csv'
+coordinates = read.csv(coordPath, stringsAsFactors = F)
+
+venues = venues %>% 
+    left_join(coordinates, by = c('Team' = 'team_name')) %>%
+    rename(Latitude = lat, Longitude = lon) %>%
+    select(League, Name, Capacity, City, State, Team, Opened, Latitude, Longitude)
+```
+
+```{r dataset, message=FALSE, warning = FALSE}
+pal <- colorFactor(c("red", "darkgreen", "darkorange", "blue"), levels(venues$League))
+popHTML = paste0('<dl>',
+                 '<dd>Venue: ', venues$Name, '</dd>',
+                 '<dd>Location: ', venues$City, ', ', venues$State, '</dd>',
+                 '<dd>Team: ', venues$Team, '</dd>',
+                 '<dd>Capacity: ',  venues$Capacity, '</dd>',
+                 '</dl>')
+venues %>% 
+        leaflet() %>% 
+        addTiles() %>% 
+        addCircleMarkers(clusterOptions = markerClusterOptions(), 
+                popup = popHTML, 
+                color = ~pal(venues$League), 
+                fillOpacity = 1,
+                radius = venues$Capacity/6000) %>% 
+        addLegend(
+                pal = pal,
+                values = venues$League)
+        
+```
+ 
