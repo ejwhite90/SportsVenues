@@ -13,7 +13,12 @@ options(scipen=999)
 
 ### Abstract
 
+The four major North American sports leagues are embedded throughout the cultures of the United States and Canada. Sports venues such as Wrigley and Fenway are often as recognizable of landmarks as any within their respective cities. The purpose of this analysis is to explore the venues associated with the four major North American sports, with the ultimate goal of creating an interactive leaflet map that allows a user to click and explore the venues for themselves.
+
+A rendered copy of this RMarkdown document can be found at my [rpubs account](http://rpubs.com/ejwhite/496144).
+
 ```{r message = F, warning = F}
+# loads revelant libraries
 library(rvest)
 library(tidyverse)
 library(knitr)
@@ -111,7 +116,7 @@ There are some formatting issues that we'll have to address:
 
 * The Location variable is currently a single text field that contains both city and state. We'd like to extract city and state into separate variables.  
 * The Name, Team, Capacity, and Opened variables have some stray brackets ([.*]) embedded within the values for certain records. We'll remove any bracketed data throughout these fields.  
-* Once brackets have been removed, the Capacity and Opened fields will need to be converted to integers.  
+* Once brackets have been removed, the Capacity and Opened variables will need to be converted to integers.  
 
 ```{r}
 # Creates city and state features and coerces data into correct types
@@ -229,13 +234,50 @@ ggplot(sharedVenues, aes(League, Name, col = League)) +
     theme(plot.title = element_text(hjust = .5))
 ```
 
+Next we'll shift our focus over to the what year the stadiums were opened. 
+
+```{r message = F, league = F}
+venues %>%
+    mutate(outlierCaption = ifelse(Opened < 1965, paste0(Name, ', ', Opened), '')) %>%
+    ggplot(., aes(League, Opened, fill = League)) +
+    geom_boxplot() + 
+    geom_text(aes(label = outlierCaption), hjust = -.2, size = 2) + 
+    labs(title = 'Year Opened by League',
+         x = 'League',
+         y = 'Year Opened') +
+    scale_y_continuous(breaks = seq(1910,2020,10)) + 
+    theme(plot.title = element_text(hjust = .5))
+```
+
+The MLB has the two oldest stadiums in Fenway Park and Wrigley Field, followed by the Los Angeles Memorial Coliseum and Soldier Field in the NFL. 
+
+It would be interesting to see if the capacity of a stadium has anything to do with the year in which it was built. We explore this possibility in the below plots.
+
+```{r message = F, warning = F}
+ggplot(venues, aes(Opened, Capacity, col = League)) +
+    geom_point(alpha = .7) +
+    geom_smooth(method = 'lm', lty = 2, size = .7) +
+    facet_wrap(~League, ncol = 2, scales = 'free')
+```
+
+There's not a clear discernable relationship between the year that a venue opened and the seating capacity. Our regression lines for the MLB, NFL, and NHL are near flat. Our NBA regression line trends downward, but the confidence bands include the possibility of a slope of zero. 
+
 ### Stadium Locations of Major American Sports Leagues
+
+Next we'd like to visualize the locations of the different sport venues. Our existing dataset contains information about city and state, but we can be more precise by pulling in latitudinal and longitudinal values.
 
 ```{r}
 # Reads csv of coordinate data
 coordPath = 'C:/Users/Rick/Documents/Projects/Sports_Venues/venueCoordinates.csv'
 coordinates = read.csv(coordPath, stringsAsFactors = F)
+head(coordinates) %>% 
+    kable() %>%
+    kable_styling(bootstrap_options = "striped", full_width = F)
+```
 
+Joining our coordinate data with our venue data allows us to generate an interactive leaflet map of the stadium locations, color coordinated by league. 
+
+```{r}
 venues = venues %>% 
     left_join(coordinates, by = c('Team' = 'team_name')) %>%
     rename(Latitude = lat, Longitude = lon) %>%

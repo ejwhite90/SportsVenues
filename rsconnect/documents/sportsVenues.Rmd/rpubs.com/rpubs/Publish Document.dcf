@@ -1,0 +1,10 @@
+name: Publish Document
+title:
+username:
+account: rpubs
+server: rpubs.com
+hostUrl: rpubs.com
+appId: https://api.rpubs.com/api/v1/document/496144/8a52a3b0a2e3497da6810394ffd3f833
+bundleId: https://api.rpubs.com/api/v1/document/496144/8a52a3b0a2e3497da6810394ffd3f833
+url: http://rpubs.com/ejwhite/496144
+when: 1557831488.28882
